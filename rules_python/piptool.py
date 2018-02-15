@@ -178,7 +178,7 @@ def main():
         whl = "@{name}//:{path}",
         requirements = "@{name}//:requirements.bzl",
         extras = [{extras}]
-    )""".format(name=args.name, repo_name=wheel.repository_name(),
+    )""".format(name=args.name, repo_name=_make_wheel_name(args.name, wheel),
                 path=wheel.basename(),
                 extras=','.join([
                   '"%s"' % extra
@@ -187,7 +187,7 @@ def main():
 
   whl_targets = ','.join([
     ','.join([
-      '"%s": "@%s//:pkg"' % (whl.distribution().lower(), whl.repository_name())
+      '"%s": "@%s//:pkg"' % (whl.distribution().lower(), _make_wheel_name(args.name, whl))
     ] + [
       # For every extra that is possible from this requirements.txt
       '"%s[%s]": "@%s//:%s"' % (whl.distribution().lower(), extra.lower(),
@@ -222,6 +222,9 @@ def requirement(name):
 """.format(input=args.input,
            whl_libraries='\n'.join(map(whl_library, whls)) if whls else "pass",
            mappings=whl_targets))
+
+def _make_wheel_name(namespace, wheel):
+    return "{}_{}".format(namespace, wheel.repository_name())
 
 if __name__ == '__main__':
   main()
