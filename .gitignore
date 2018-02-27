@@ -37,3 +37,9 @@ bazel-bin
 bazel-genfiles
 bazel-out
 bazel-testlogs
+
+# Mac
+.DS_store
+
+# Visual Studio
+.vscode
