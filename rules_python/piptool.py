@@ -15,19 +15,21 @@
 
 import argparse
 import atexit
-import json
 import os
 import pkgutil
-import pkg_resources
-import re
+# import pkg_resources
 import shutil
 import sys
 import tempfile
-import zipfile
 
 # Note: We carefully import the following modules in a particular
 # order, since these modules modify the import path and machinery.
 import pkg_resources
+
+if sys.version_info < (3, 0):
+    _WHL_LIBRARY_RULE = 'whl_library'
+else:
+    _WHL_LIBRARY_RULE = 'whl3_library'
 
 
 def extract_packages(package_names):
@@ -35,8 +37,8 @@ def extract_packages(package_names):
 
     # Set a safe extraction dir
     extraction_tmpdir = tempfile.mkdtemp()
-    atexit.register(lambda: shutil.rmtree(
-        extraction_tmpdir, ignore_errors=True))
+    atexit.register(
+        lambda: shutil.rmtree(extraction_tmpdir, ignore_errors=True))
     pkg_resources.set_extraction_path(extraction_tmpdir)
 
     # Extract each package to disk
@@ -61,13 +63,13 @@ def extract_packages(package_names):
 extract_packages(['pip', 'setuptools', 'wheel'])
 
 # Defeat pip's attempt to mangle sys.path
-saved_sys_path = sys.path
+_SAVED_SYS_PATH = sys.path
 sys.path = sys.path[:]
-import pip
-sys.path = saved_sys_path
+import pip  # pylint: disable=C0413
+sys.path = _SAVED_SYS_PATH
 
-import setuptools
-import wheel
+# import setuptools
+# import wheel
 
 
 def pip_main(argv):
@@ -75,29 +77,16 @@ def pip_main(argv):
     # https://github.com/pypa/get-pip/blob/430ba37776ae2ad89/template.py#L164-L168
     cert_path = os.path.join(tempfile.mkdtemp(), "cacert.pem")
     with open(cert_path, "wb") as cert:
-      cert.write(pkgutil.get_data("pip._vendor.requests", "cacert.pem"))
+        cert.write(pkgutil.get_data("pip._vendor.requests", "cacert.pem"))
     argv = ["--disable-pip-version-check", "--cert", cert_path] + argv
     return pip.main(argv)
 
-from rules_python.whl import Wheel
 
-parser = argparse.ArgumentParser(
-    description='Import Python dependencies into Bazel.')
+from rules_python.whl import Wheel  # pylint: disable=C0413
 
-parser.add_argument('--name', action='store',
-                    help=('The namespace of the import.'))
-
-parser.add_argument('--input', action='store',
-                    help=('The requirements.txt file to import.'))
-
-parser.add_argument('--output', action='store',
-                    help=('The requirements.bzl file to export.'))
-
-parser.add_argument('--directory', action='store',
-                    help=('The directory into which to put .whl files.'))
 
 def determine_possible_extras(whls):
-  """Determines the list of possible "extras" for each .whl
+    """Determines the list of possible "extras" for each .whl
 
   The possibility of an extra is determined by looking at its
   additional requirements, and determinine whether they are
@@ -110,121 +99,177 @@ def determine_possible_extras(whls):
     a dict that is keyed by the Wheel objects in whls, and whose
     values are lists of possible extras.
   """
-  whl_map = {
-    whl.distribution(): whl
-    for whl in whls
-  }
+    whl_map = {whl.distribution(): whl for whl in whls}
 
-  # TODO(mattmoor): Consider memoizing if this recursion ever becomes
-  # expensive enough to warrant it.
-  def is_possible(distro, extra):
-    distro = distro.replace("-", "_")
-    # If we don't have the .whl at all, then this isn't possible.
-    if distro not in whl_map:
-      return False
-    whl = whl_map[distro]
-    # If we have the .whl, and we don't need anything extra then
-    # we can satisfy this dependency.
-    if not extra:
-      return True
-    # If we do need something extra, then check the extra's
-    # dependencies to make sure they are fully satisfied.
-    for extra_dep in whl.dependencies(extra=extra):
-      req = pkg_resources.Requirement.parse(extra_dep)
-      # Check that the dep and any extras are all possible.
-      if not is_possible(req.project_name, None):
-        return False
-      for e in req.extras:
-        if not is_possible(req.project_name, e):
-          return False
-    # If all of the dependencies of the extra are satisfiable then
-    # it is possible to construct this dependency.
-    return True
+    # TODO(mattmoor): Consider memoizing if this recursion ever becomes
+    # expensive enough to warrant it.
+    def is_possible(distro, extra):
+        distro = distro.replace("-", "_")
+        # If we don't have the .whl at all, then this isn't possible.
+        if distro not in whl_map:
+            return False
+        whl = whl_map[distro]
+        # If we have the .whl, and we don't need anything extra then
+        # we can satisfy this dependency.
+        if not extra:
+            return True
+        # If we do need something extra, then check the extra's
+        # dependencies to make sure they are fully satisfied.
+        for extra_dep in whl.dependencies(extra=extra):
+            req = pkg_resources.Requirement.parse(extra_dep)
+            # Check that the dep and any extras are all possible.
+            if not is_possible(req.project_name, None):
+                return False
+            for extra_ in req.extras:
+                if not is_possible(req.project_name, extra_):
+                    return False
+        # If all of the dependencies of the extra are satisfiable then
+        # it is possible to construct this dependency.
+        return True
 
-  return {
-    whl: [
-      extra
-      for extra in whl.extras()
-      if is_possible(whl.distribution(), extra)
-    ]
-    for whl in whls
-  }
+    return {
+        whl: [
+            extra for extra in whl.extras()
+            if is_possible(whl.distribution(), extra)
+        ]
+        for whl in whls
+    }
+
 
 def main():
-  args = parser.parse_args()
+    parser = argparse.ArgumentParser(
+        description='Import Python dependencies into Bazel.')
 
-  # https://github.com/pypa/pip/blob/9.0.1/pip/__init__.py#L209
-  if pip_main(["wheel", "-w", args.directory, "-r", args.input]):
-    sys.exit(1)
+    parser.add_argument(
+        '--name', action='store', help=('The namespace of the import.'))
 
-  # Enumerate the .whl files we downloaded.
-  def list_whls():
-    dir = args.directory + '/'
-    for root, unused_dirnames, filenames in os.walk(dir):
-      for fname in filenames:
-        if fname.endswith('.whl'):
-          yield os.path.join(root, fname)
+    parser.add_argument(
+        '--input',
+        action='store',
+        help=('The requirements.txt file to import.'))
 
-  whls = [Wheel(path) for path in list_whls()]
-  possible_extras = determine_possible_extras(whls)
+    parser.add_argument(
+        '--output',
+        action='store',
+        help=('The requirements.bzl file to export.'))
 
-  def whl_library(wheel):
-    # Indentation here matters.  whl_library must be within the scope
-    # of the function below.  We also avoid reimporting an existing WHL.
-    return """
+    parser.add_argument(
+        '--directory',
+        action='store',
+        help=('The directory into which to put .whl files.'))
+    args = parser.parse_args()
+
+    # https://github.com/pypa/pip/blob/9.0.1/pip/__init__.py#L209
+    if pip_main(["wheel", "-w", args.directory, "-r", args.input]):
+        sys.exit(1)
+
+    # Enumerate the .whl files we downloaded.
+    def list_whls():
+        dir_ = args.directory + '/'
+        for root, unused_dirnames, filenames in os.walk(dir_):
+            for fname in filenames:
+                if fname.endswith('.whl'):
+                    yield os.path.join(root, fname)
+
+    whls = [Wheel(path) for path in list_whls()]
+    possible_extras = determine_possible_extras(whls)
+
+    def whl_library(wheel):
+        # Indentation here matters.  whl_library must be within the scope
+        # of the function below.  We also avoid reimporting an existing WHL.
+        return """
   if "{repo_name}" not in native.existing_rules():
-    whl_library(
+    {whl_library}(
         name = "{repo_name}",
         whl = "@{name}//:{path}",
         requirements = "@{name}//:requirements.bzl",
         extras = [{extras}]
-    )""".format(name=args.name, repo_name=_make_wheel_name(args.name, wheel),
-                path=wheel.basename(),
-                extras=','.join([
-                  '"%s"' % extra
-                  for extra in possible_extras.get(wheel, [])
-                ]))
+    )""".format(
+            name=args.name,
+            repo_name=_make_wheel_name(args.name, wheel),
+            path=wheel.basename(),
+            extras=','.join(
+                ['"%s"' % extra for extra in possible_extras.get(wheel, [])]),
+            whl_library=_WHL_LIBRARY_RULE)
 
-  whl_targets = ','.join([
-    ','.join([
-      '"%s": "@%s//:pkg"' % (whl.distribution().lower(), _make_wheel_name(args.name, whl))
-    ] + [
-      # For every extra that is possible from this requirements.txt
-      '"%s[%s]": "@%s//:%s"' % (whl.distribution().lower(), extra.lower(),
-                                whl.repository_name(), extra)
-      for extra in possible_extras.get(whl, [])
+    join_str = ',\n    '
+    pip_name_to_py_library = join_str.join([
+        join_str.join([
+            '"{pip_name}": "@{wheel_name}//:pkg"'.format(
+                pip_name=whl.distribution().lower(),
+                wheel_name=_make_wheel_name(args.name, whl))
+        ] + [
+            # For every extra that is possible from this requirements.txt
+            '"{pip_name}[{extra}]": "@{wheel_name}//:{extra}"'.format(
+                pip_name=whl.distribution().lower(),
+                extra=extra.lower(),
+                wheel_name=_make_wheel_name(args.name, whl))
+            for extra in possible_extras.get(whl, [])
+        ]) for whl in whls
     ])
-    for whl in whls
-  ])
 
-  with open(args.output, 'w') as f:
-    f.write("""\
+    pip_name_to_whl_filegroup = join_str.join([
+        join_str.join([
+            '"{pip_name}": "@{wheel_name}//:whl"'.format(
+                pip_name=whl.distribution().lower(),
+                wheel_name=_make_wheel_name(args.name, whl))
+        ] + [
+            # For every extra that is possible from this requirements.txt
+            '"{pip_name}[{extra}]": "@{wheel_name}//:{extra}_whl"'.format(
+                pip_name=whl.distribution().lower(),
+                extra=extra.lower(),
+                wheel_name=_make_wheel_name(args.name, whl))
+            for extra in possible_extras.get(whl, [])
+        ]) for whl in whls
+    ])
+
+    with open(args.output, 'w') as file_obj:
+        file_obj.write("""\
 # Install pip requirements.
 #
 # Generated from {input}
 
-load("@io_bazel_rules_python//python:whl.bzl", "whl_library")
+load("@io_bazel_rules_python//python:whl.bzl", "{whl_library}")
 
 def pip_install():
   {whl_libraries}
 
 _requirements = {{
-  {mappings}
+    {pip_name_to_py_library}
+}}
+
+_whl_requirements = {{
+    {pip_name_to_whl_filegroup}
 }}
 
 all_requirements = _requirements.values()
+all_whl_requirements = _whl_requirements.values()
 
 def requirement(name):
-  name_key = name.replace("-", "_").lower()
+  name_key = _make_name_key(name)
   if name_key not in _requirements:
-    fail("Could not find pip-provided dependency: '%s'" % name)
+    fail("Could not find pip-provided dependency: '%s'; available: %s" % (name, sorted(_requirements.keys())))
   return _requirements[name_key]
+
+def whl_requirement(name):
+  name_key = _make_name_key(name)
+  if name_key not in _whl_requirements:
+    fail("Could not find pip-provided whl dependency: '%s'; available: %s" % (name, sorted(_whl_requirements.keys())))
+  return _whl_requirements[name_key]
+
+def _make_name_key(name):
+  name_key = name.replace("-", "_").lower()
+  return name_key
 """.format(input=args.input,
            whl_libraries='\n'.join(map(whl_library, whls)) if whls else "pass",
-           mappings=whl_targets))
+           pip_name_to_py_library=pip_name_to_py_library,
+           pip_name_to_whl_filegroup=pip_name_to_whl_filegroup,
+           whl_library=_WHL_LIBRARY_RULE))
+
 
 def _make_wheel_name(namespace, wheel):
     return "{}_{}".format(namespace, wheel.repository_name())
 
+
 if __name__ == '__main__':
-  main()
+    main()

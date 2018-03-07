@@ -13,11 +13,17 @@
 # limitations under the License.
 """Import .whl files into Bazel."""
 
+def _whl3_impl(repository_ctx):
+  return _whl_impl_base(repository_ctx, "python3")
+
 def _whl_impl(repository_ctx):
+  return _whl_impl_base(repository_ctx, "python")
+
+def _whl_impl_base(repository_ctx, python_binary):
   """Core implementation of whl_library."""
 
   args = [
-    "python",
+    python_binary,
     repository_ctx.path(repository_ctx.attr._script),
     "--whl", repository_ctx.path(repository_ctx.attr.whl),
     "--requirements", repository_ctx.attr.requirements,
@@ -49,6 +55,24 @@ whl_library = repository_rule(
         ),
     },
     implementation = _whl_impl,
+)
+
+whl3_library = repository_rule(
+    attrs = {
+        "whl": attr.label(
+            allow_files = True,
+            mandatory = True,
+            single_file = True,
+        ),
+        "requirements": attr.string(),
+        "extras": attr.string_list(),
+        "_script": attr.label(
+            executable = True,
+            default = Label("//tools:whltool.par"),
+            cfg = "host",
+        ),
+    },
+    implementation = _whl3_impl,
 )
 
 """A rule for importing <code>.whl</code> dependencies into Bazel.

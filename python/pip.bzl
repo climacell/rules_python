@@ -13,7 +13,7 @@
 # limitations under the License.
 """Import pip requirements into Bazel."""
 
-def _pip_import_impl(python_binary, repository_ctx):
+def _pip_import_impl_base(repository_ctx, python_binary):
   """Core implementation of pip_import."""
 
   # Add an empty top-level BUILD file.
@@ -28,17 +28,17 @@ def _pip_import_impl(python_binary, repository_ctx):
     "--name", repository_ctx.attr.name,
     "--input", repository_ctx.path(repository_ctx.attr.requirements),
     "--output", repository_ctx.path("requirements.bzl"),
-    "--directory", repository_ctx.path("")
+    "--directory", repository_ctx.path(""),
   ])
 
   if result.return_code:
     fail("pip_import failed: %s (%s)" % (result.stdout, result.stderr))
 
-def _pip2_import_impl(repository_ctx):
-  return _pip_import_impl("python", repository_ctx)
+def _pip_import_impl(repository_ctx):
+  return _pip_import_impl_base(repository_ctx, "python")
 
 def _pip3_import_impl(repository_ctx):
-  return _pip_import_impl("python3", repository_ctx)
+  return _pip_import_impl_base(repository_ctx, "python3")
 
 pip_import = repository_rule(
     attrs = {
@@ -53,7 +53,7 @@ pip_import = repository_rule(
             cfg = "host",
         ),
     },
-    implementation = _pip2_import_impl,
+    implementation = _pip_import_impl,
 )
 
 pip3_import = repository_rule(
