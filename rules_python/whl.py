@@ -24,6 +24,57 @@ import zipfile
 import pkg_resources
 
 
+# pylint: disable=R0914
+def main():
+    args = _parse_args()
+
+    dependency_list = []
+    whl_dependency_list = []
+    extra_list = []
+    whl_extra_list = []
+
+    whl_paths = args.whl_paths
+    if args.whl is not None:
+        whl_paths = whl_paths + [args.whl]
+
+    # Extract the files into the current directory.
+    for wheel_path in args.whl_paths:
+        wheel = Wheel(wheel_path)
+        wheel.expand(args.directory)
+
+        copied_whl_path = os.path.join(args.directory,
+                                       os.path.basename(wheel_path))
+        shutil.copy(wheel_path, copied_whl_path)
+
+        if args.track_deps:
+            for dependency in wheel.dependencies():
+                dependency_list.append('requirement("{}")'.format(dependency))
+                whl_dependency_list.append(
+                    'pypi_whl_requirement("{}")'.format(dependency))
+            for extra in args.extras:
+                extra_list.append(_make_extra(extra, wheel))
+                whl_extra_list.append(_make_whl_extra(extra, wheel))
+
+    # Generate BUILD file.
+    dependency_join_str = ',\n        '
+    extras_join_str = '\n\n'
+
+    dependencies = dependency_join_str.join(dependency_list)
+    whl_dependencies = dependency_join_str.join(whl_dependency_list)
+    extras = extras_join_str.join(extra_list)
+    whl_extras = extras_join_str.join(whl_extra_list)
+
+    build_file_content = _make_build_file_content(
+        requirements_bzl=args.requirements,
+        dependencies=dependencies,
+        whl_dependencies=whl_dependencies,
+        extras=extras,
+        whl_extras=whl_extras)
+
+    with open(os.path.join(args.directory, 'BUILD'), 'w') as file_obj:
+        file_obj.write(build_file_content)
+
+
 class Wheel(object):
     def __init__(self, path):
         self._path = path
@@ -115,17 +166,28 @@ class Wheel(object):
         return {'name': name_pattern.search(content).group(1)}
 
 
-# pylint: disable=R0914
-def main():
+def _parse_args():
     parser = argparse.ArgumentParser(
-        description='Unpack a WHL file as a py_library.')
+        description='Unpack a .whl file as a py_library.')
 
     parser.add_argument(
-        '--whl', action='store', help=('The .whl file we are expanding.'))
+        '--whl_paths',
+        action='append',
+        default=[],
+        help=('The .whl files we are expanding.'))
+
+    parser.add_argument(
+        '--whl',
+        action='store',
+        default=None,
+        help='Deprecated; use --whl_paths')
+
+    parser.add_argument('--track_deps', action='store', type=bool)
 
     parser.add_argument(
         '--requirements',
         action='store',
+        default=None,
         help='The pip_import from which to draw dependencies.')
 
     parser.add_argument(
@@ -138,63 +200,66 @@ def main():
         '--extras',
         action='append',
         help='The set of extras for which to generate library targets.')
-    args = parser.parse_args()
-    whl = Wheel(args.whl)
 
-    # Extract the files into the current directory
-    whl.expand(args.directory)
-    copied_whl_path = os.path.join(args.directory, os.path.basename(args.whl))
-    shutil.copy(args.whl, copied_whl_path)
+    return parser.parse_args()
 
-    join_str = ',\n        '
-    dependencies = join_str.join(
-        ['requirement("%s")' % d for d in whl.dependencies()])
-    whl_dependencies = join_str.join(
-        ['whl_requirement("%s")' % d for d in whl.dependencies()])
 
-    extra_template = textwrap.dedent("""\
-        py_library(
-            name = "{extra}",
-            deps = [
-                ":pkg",{deps}
-            ],
+_EXTRA_TEMPLATE = textwrap.dedent("""\
+    py_library(
+        name = "{extra}",
+        deps = [
+            ":pkg",{deps}
+        ],
+    )
+""")
+_WHL_EXTRA_TEMPLATE = textwrap.dedent("""\
+    filegroup(
+        name = "{extra}_whl",
+        srcs = [
+            ":whl",{deps}
+        ],
+    )
+""")
+
+
+def _make_extra(extra, wheel):
+    return _EXTRA_TEMPLATE.format(
+        extra=extra,
+        deps=','.join(
+            ['requirement("%s")' % dep for dep in wheel.dependencies(extra)]),
+    )
+
+
+def _make_whl_extra(extra, wheel):
+    _WHL_EXTRA_TEMPLATE.format(
+        extra=extra,
+        deps=','.join([
+            'pypi_whl_requirement("%s")' % dep
+            for dep in wheel.dependencies(extra)
+        ]),
+    )
+
+
+def _make_build_file_content(requirements_bzl, dependencies, whl_dependencies,
+                             extras, whl_extras):
+    if requirements_bzl:
+        template = (
+            'load("{requirements_bzl}", "requirement", "pypi_whl_requirement")'
         )
-    """)
-    extras = '\n\n'.join([
-        extra_template.format(
-            extra=extra,
-            deps=','.join(
-                ['requirement("%s")' % dep
-                 for dep in whl.dependencies(extra)]))
-        for extra in args.extras or []
-    ])
+        load_requirements_statement = template.format(
+            requirements_bzl=requirements_bzl)
+    else:
+        load_requirements_statement = ''
 
-    whl_extra_template = textwrap.dedent("""\
-        filegroup(
-            name = "{extra}_whl",
-            srcs = [
-                ":whl",{deps}
-            ],
-        )
-    """)
-    whl_extras = '\n\n'.join([
-        whl_extra_template.format(
-            extra=extra,
-            deps=','.join([
-                'whl_requirement("%s")' % dep
-                for dep in whl.dependencies(extra)
-            ])) for extra in args.extras or []
-    ])
-
-    build_content = textwrap.dedent("""\
+    return textwrap.dedent("""\
         package(default_visibility = ["//visibility:public"])
 
-        load("{requirements}", "requirement", "whl_requirement")
+        {load_requirements_statement}
 
         py_library(
             name = "pkg",
             srcs = glob(["**/*.py"]),
-            data = glob(["**/*"], exclude=["**/*.py", "**/* *", "BUILD", "WORKSPACE"]),
+            data = glob(["**/*"], exclude=["**/*.py", "**/* *", "BUILD", "WORKSPACE", "**/*.whl"]),
             # This makes this directory a top-level in the python import
             # search path for anything that depends on this.
             imports = ["."],
@@ -210,15 +275,12 @@ def main():
 
         {whl_extras}
     """).format(
-        requirements=args.requirements,
+        requirements_bzl=requirements_bzl,
         dependencies=dependencies,
         whl_dependencies=whl_dependencies,
         extras=extras,
-        whl_path=copied_whl_path,
-        whl_extras=whl_extras)
-
-    with open(os.path.join(args.directory, 'BUILD'), 'w') as file_obj:
-        file_obj.write(build_content)
+        whl_extras=whl_extras,
+        load_requirements_statement=load_requirements_statement)
 
 
 if __name__ == '__main__':

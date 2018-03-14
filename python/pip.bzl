@@ -24,11 +24,11 @@ def _pip_import_impl_base(repository_ctx, python_binary):
 
   # To see the output, pass: quiet=False
   result = repository_ctx.execute([
-    python_binary, repository_ctx.path(repository_ctx.attr._script),
-    "--name", repository_ctx.attr.name,
-    "--input", repository_ctx.path(repository_ctx.attr.requirements),
-    "--output", repository_ctx.path("requirements.bzl"),
-    "--directory", repository_ctx.path(""),
+      python_binary, repository_ctx.path(repository_ctx.attr._script),
+      "--name", repository_ctx.attr.name,
+      "--input", repository_ctx.path(repository_ctx.attr.requirements),
+      "--output", repository_ctx.path("requirements.bzl"),
+      "--directory", repository_ctx.path(""),
   ])
 
   if result.return_code:

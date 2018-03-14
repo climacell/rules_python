@@ -13,38 +13,50 @@
 # limitations under the License.
 """Import .whl files into Bazel."""
 
+def _whl_impl_base(repository_ctx, python_binary):
+    """Core implementation of whl_library."""
+    whl_path_args = []
+    for wheel_path in repository_ctx.attr.whls:
+        wheel_path = repository_ctx.path(wheel_path)
+        whl_path_args += ['--whl_paths', wheel_path]
+
+    whl_args = []
+    if repository_ctx.attr.whl != None:
+        whl_args += ['--whl', repository_ctx.path(repository_ctx.attr.whl)]
+    
+    if not (whl_path_args or whl_args):
+        fail("One of `whl` or `whls` must be provided")
+
+    args = [
+        python_binary,
+        repository_ctx.path(repository_ctx.attr._script),
+    ]
+    args += whl_path_args
+    args += whl_args
+    if repository_ctx.attr.extras:
+        args += ["--extras=%s" % extra for extra in repository_ctx.attr.extras]
+    if repository_ctx.attr.requirements:
+        args += ["--requirements", repository_ctx.attr.requirements]
+
+    result = repository_ctx.execute(args, quiet=False)
+    if result.return_code:
+        fail("whl_library failed: %s (%s)" % (result.stdout, result.stderr))
+
 def _whl3_impl(repository_ctx):
-  return _whl_impl_base(repository_ctx, "python3")
+    return _whl_impl_base(repository_ctx, "python3")
 
 def _whl_impl(repository_ctx):
-  return _whl_impl_base(repository_ctx, "python")
-
-def _whl_impl_base(repository_ctx, python_binary):
-  """Core implementation of whl_library."""
-
-  args = [
-    python_binary,
-    repository_ctx.path(repository_ctx.attr._script),
-    "--whl", repository_ctx.path(repository_ctx.attr.whl),
-    "--requirements", repository_ctx.attr.requirements,
-  ]
-
-  if repository_ctx.attr.extras:
-    args += [
-      "--extras=%s" % extra
-      for extra in repository_ctx.attr.extras
-    ]
-
-  result = repository_ctx.execute(args)
-  if result.return_code:
-    fail("whl_library failed: %s (%s)" % (result.stdout, result.stderr))
+    return _whl_impl_base(repository_ctx, "python")
 
 whl_library = repository_rule(
     attrs = {
+        "whls": attr.label_list(
+            allow_files = True,
+            doc = "List of .whl files that this library encompasses",
+        ),
         "whl": attr.label(
             allow_files = True,
-            mandatory = True,
-            single_file = True,
+            doc = "A single .whl file that this library encompasses",
         ),
         "requirements": attr.string(),
         "extras": attr.string_list(),
@@ -59,10 +71,13 @@ whl_library = repository_rule(
 
 whl3_library = repository_rule(
     attrs = {
+        "whls": attr.label_list(
+            allow_files = True,
+            doc = "List of .whl files that this library encompasses",
+        ),
         "whl": attr.label(
             allow_files = True,
-            mandatory = True,
-            single_file = True,
+            doc = "A single .whl file that this library encompasses",
         ),
         "requirements": attr.string(),
         "extras": attr.string_list(),
@@ -84,20 +99,21 @@ See <code>pip_import</code> for proper usage.
 This rule imports a <code>.whl</code> file as a <code>py_library</code>:
 <pre><code>whl_library(
     name = "foo",
-    whl = ":my-whl-file",
-    requirements = "name of pip_import rule",
+    whls = [":my-whl-file", ...],
+    requirements = "<name of pip_import rule>",
 )
 </code></pre>
 
-This rule defines a <code>@foo//:pkg</code> <code>py_library</code> target.
+This rule defines a <code>@foo//:pkg</code> <code>py_library</code> target and
+a <code>@foo//:whl</code> <code>filegroup</code> target.
 
 Args:
-  whl: The path to the .whl file (the name is expected to follow [this
+  whls: The paths to the .whl files (the names are expected to follow [this
     convention](https://www.python.org/dev/peps/pep-0427/#file-name-convention))
 
   requirements: The name of the pip_import repository rule from which to
-    load this .whl's dependencies.
+    load each <code>.whl</code>'s dependencies.
 
-  extras: A subset of the "extras" available from this <code>.whl</code> for which
-    <code>requirements</code> has the dependencies.
+  extras: A subset of the "extras" available from these <code>.whl</code>s for
+    which <code>requirements</code> has the dependencies.
 """
