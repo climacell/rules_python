@@ -46,7 +46,7 @@ def _whl3_impl(repository_ctx):
     return _whl_impl_base(repository_ctx, "python3")
 
 def _whl_impl(repository_ctx):
-    return _whl_impl_base(repository_ctx, "python")
+    return _whl_impl_base(repository_ctx, "python2")
 
 whl_library = repository_rule(
     attrs = {

@@ -35,7 +35,7 @@ def _pip_import_impl_base(repository_ctx, python_binary):
     fail("pip_import failed: %s (%s)" % (result.stdout, result.stderr))
 
 def _pip_import_impl(repository_ctx):
-  return _pip_import_impl_base(repository_ctx, "python")
+  return _pip_import_impl_base(repository_ctx, "python2")
 
 def _pip3_import_impl(repository_ctx):
   return _pip_import_impl_base(repository_ctx, "python3")
