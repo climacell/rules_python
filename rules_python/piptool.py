@@ -253,15 +253,14 @@ def _make_wheel_to_extras(wheels):
     }
 
 
-_WHL_LIBRARY_RULE_TEMPLATE = """\
+_WHL_LIBRARY_RULE_TEMPLATE = """
   if "{whl_repo_name}" not in native.existing_rules():
     {whl_library}(
         name = "{whl_repo_name}",
         whls = [{whls}],
         requirements = "@{reqs_repo_name}//:requirements.bzl",
         extras = [{extras}]
-    )
-"""
+    )"""
 
 
 def _make_whl_library_rule(reqs_repo_name, whl_repo_name, wheels, extras):
@@ -271,14 +270,7 @@ def _make_whl_library_rule(reqs_repo_name, whl_repo_name, wheels, extras):
     ])
     # Indentation here matters.  whl_library must be within the scope
     # of the function below.  We also avoid reimporting an existing WHL.
-    return """
-  if "{whl_repo_name}" not in native.existing_rules():
-    {whl_library}(
-        name = "{whl_repo_name}",
-        whls = [{whls}],
-        requirements = "@{reqs_repo_name}//:requirements.bzl",
-        extras = [{extras}]
-    )""".format(
+    return _WHL_LIBRARY_RULE_TEMPLATE.format(
         whl_repo_name=whl_repo_name,
         reqs_repo_name=reqs_repo_name,
         extras=extras,
